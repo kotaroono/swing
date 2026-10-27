@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Swing Mirror">
+<title>Swing Mirror</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+:root{--bg:#0d1110;--panel:#1a201e;--line:#2c3532;--fg:#eef3f0;--mut:#93a39c;--acc:#7bd88f;--warn:#ffcc4d;--bad:#ff7a6b}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Noto Sans JP",sans-serif;overscroll-behavior:none}
+body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.screen{position:fixed;inset:0;display:flex;flex-direction:column;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+.screen[hidden]{display:none}
+button,select,input{font:inherit;color:var(--fg);background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 14px;min-height:44px}
+button{cursor:pointer}
+button:active{transform:scale(.97)}
+button.on{background:var(--acc);color:#08130c;border-color:var(--acc);font-weight:600}
+button.big{font-size:20px;padding:22px 20px;border-radius:18px;width:100%;text-align:left}
+button.big small{display:block;color:var(--mut);font-size:14px;margin-top:4px}
+.muted{color:var(--mut)}
+
+/* home */
+#home{align-items:center;justify-content:center;padding:24px}
+#home .box{width:100%;max-width:440px;display:flex;flex-direction:column;gap:14px}
+#home h1{margin:0 0 4px;font-size:28px}
+#home p{margin:0 0 10px;line-height:1.6}
+
+/* camera */
+#camera video{flex:1;min-height:0;width:100%;object-fit:contain;background:#000}
+#camPanel{padding:12px 14px 14px;background:var(--panel);border-top:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+#camPanel .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#camPanel .row>*{flex:1;min-width:0}
+#codeInput{font-size:28px;letter-spacing:.3em;text-align:center;font-variant-numeric:tabular-nums}
+#camStatus{font-size:15px;min-height:1.4em}
+#camInfo{font-size:13px}
+
+/* monitor */
+#stage{flex:1;min-height:0;display:flex;gap:4px;background:#000;position:relative}
+.view{position:relative;flex:1;min-width:0;overflow:hidden}
+.view video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain}
+.view canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;background:#000}
+.badge{position:absolute;left:10px;top:10px;padding:5px 10px;border-radius:10px;background:rgba(0,0,0,.55);font-size:15px;pointer-events:none}
+#waiting{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;text-align:center;padding:20px}
+#waiting .code{font-size:clamp(64px,16vw,140px);font-weight:700;letter-spacing:.12em;font-variant-numeric:tabular-nums;color:var(--acc)}
+#toolbar,#reviewBar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;padding:8px 10px;background:var(--panel);border-top:1px solid var(--line)}
+#toolbar .sep{width:1px;align-self:stretch;background:var(--line);margin:0 4px}
+#toolbar .grp{display:flex;gap:4px;align-items:center}
+#delayVal{min-width:3.4em;text-align:center;font-variant-numeric:tabular-nums}
+#codeChip{margin-left:auto;font-size:14px}
+#reviewBar[hidden]{display:none}
+#reviewBar input[type=range]{flex:1;min-width:160px;padding:0;accent-color:var(--acc);height:44px;background:transparent;border:0}
+#reviewTime{min-width:5.5em;text-align:right;font-variant-numeric:tabular-nums}
+#toast{position:fixed;left:50%;bottom:120px;transform:translateX(-50%);background:rgba(0,0,0,.8);padding:10px 16px;border-radius:12px;font-size:15px;opacity:0;transition:opacity .25s;pointer-events:none;z-index:9}
+#toast.show{opacity:1}
+</style>
+</head>
+<body>
+
+<!-- ホーム -->
+<section id="home" class="screen">
+  <div class="box">
+    <h1>⛳ Swing Mirror</h1>
+    <p class="muted">iPhoneで撮った映像を、iPadに鏡のように映します。<br>両方の端末で同じネットワーク（Wi-Fi または iPhoneのテザリング）に接続してください。</p>
+    <button class="big" id="goMonitor">📺 モニターとして使う<small>iPad：目の前に置く側</small></button>
+    <button class="big" id="goCamera">📱 カメラとして使う<small>iPhone：スイングを撮る側</small></button>
+    <p class="muted" style="font-size:13px;margin-top:8px">先にiPadで「モニター」を開くと4桁のコードが出ます。そのコードをiPhoneに入力してください。</p>
+  </div>
+</section>
+
+<!-- カメラ（iPhone） -->
+<section id="camera" class="screen" hidden>
+  <video id="camPreview" playsinline muted autoplay></video>
+  <div id="camPanel">
+    <div class="row">
+      <input id="codeInput" inputmode="numeric" pattern="[0-9]*" maxlength="4" placeholder="0000" aria-label="iPadのコード">
+      <button id="connectBtn" class="on" style="flex:0 0 auto">接続</button>
+    </div>
+    <div class="row">
+      <select id="camLabel" aria-label="撮影方向">
+        <option value="後方">後方（飛球線後方）</option>
+        <option value="正面">正面</option>
+      </select>
+      <select id="camQuality" aria-label="画質">
+        <option value="1280x720x60">720p・60fps（推奨）</option>
+        <option value="1280x720x30">720p・30fps（軽い）</option>
+        <option value="1920x1080x30">1080p・30fps（高画質）</option>
+      </select>
+    </div>
+    <div class="row">
+      <select id="camDevice" aria-label="カメラ"><option value="">背面カメラ</option></select>
+    </div>
+    <div id="camStatus">コードを入力して「接続」を押してください</div>
+    <div id="camInfo" class="muted"></div>
+    <div class="muted" style="font-size:12px">※ 撮影中はこの画面を開いたままにしてください（画面ロック・アプリ切替で映像が止まります）</div>
+  </div>
+</section>
+
+<!-- モニター（iPad） -->
+<section id="monitor" class="screen" hidden>
+  <div id="stage">
+    <div id="waiting">
+      <div class="muted">iPhoneでこのコードを入力してください</div>
+      <div class="code" id="monCode">----</div>
+      <div class="muted" id="monStatus">準備中…</div>
+    </div>
+  </div>
+  <div id="reviewBar" hidden>
+    <button id="stepBack" aria-label="1コマ戻る">◀︎</button>
+    <button id="playBtn">▶︎ 再生</button>
+    <button id="speedBtn">×0.25</button>
+    <button id="stepFwd" aria-label="1コマ進む">▶︎</button>
+    <input type="range" id="scrub" min="0" max="1000" value="1000">
+    <span id="reviewTime">0.0秒</span>
+    <button id="exitReview" class="on">戻る</button>
+  </div>
+  <div id="toolbar">
+    <div class="grp">
+      <button id="modeLive">ライブ</button>
+      <button id="modeDelay">遅延</button>
+    </div>
+    <div class="grp">
+      <button id="delayMinus" aria-label="遅延を短く">−</button>
+      <span id="delayVal">8秒</span>
+      <button id="delayPlus" aria-label="遅延を長く">＋</button>
+    </div>
+    <button id="pauseBtn">⏸ 止めて見る</button>
+    <span class="sep"></span>
+    <button id="toolLine">／ 線</button>
+    <button id="toolCircle">◯ 円</button>
+    <button id="undoBtn" aria-label="1つ戻す">↶</button>
+    <button id="clearBtn" aria-label="すべて消す">🗑</button>
+    <span class="sep"></span>
+    <button id="flipBtn">↔ 反転</button>
+    <button id="fsBtn" aria-label="全画面">⛶</button>
+    <span id="codeChip" class="muted"></span>
+  </div>
+</section>
+
+<div id="toast"></div>
+
+<script>
+'use strict';
+const ID_PREFIX = 'kk-swingmirror-v1-';
+const BUF_MS = 20000;      // 遅延・振り返り用に保持する秒数
+const CAP_W = 720;         // 保存フレームの横幅
+const CAP_MAX_FPS = 60;
+const DELAY_MIN = 2, DELAY_MAX = 15;
+
+const $ = s => document.querySelector(s);
+function show(id){ document.querySelectorAll('.screen').forEach(e => e.hidden = (e.id !== id)); }
+let toastTimer = null;
+function toast(msg){ const t=$('#toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(toastTimer); toastTimer=setTimeout(()=>t.classList.remove('show'),2200); }
+function lsGet(k,d){ try{ const v=localStorage.getItem(k); return v===null?d:v; }catch(e){ return d; } }
+function lsSet(k,v){ try{ localStorage.setItem(k,v); }catch(e){} }
+
+/* ---------- 画面を消さない ---------- */
+let wantAwake=false, wakeLock=null;
+async function keepAwake(){
+  wantAwake=true;
+  try{ if('wakeLock' in navigator){ wakeLock = await navigator.wakeLock.request('screen'); } }catch(e){}
+}
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState==='visible' && wantAwake) keepAwake();
+});
+
+$('#goMonitor').onclick = startMonitor;
+$('#goCamera').onclick = startCamera;
+
+/* =====================================================
+   カメラ側（iPhone）
+   ===================================================== */
+let camStream=null, camPeer=null, camCall=null, camTuned=false;
+
+function startCamera(){
+  show('camera');
+  keepAwake();
+  $('#codeInput').value = lsGet('lastCode','');
+  $('#camLabel').value = lsGet('camLabel','後方');
+  $('#camQuality').value = lsGet('camQuality','1280x720x60');
+  startPreview(lsGet('camDevice','') || null).catch(err => {
+    $('#camStatus').textContent = '❌ カメラを起動できません：' + (err && err.message || err);
+  });
+}
+
+async function startPreview(deviceId){
+  if(camStream) camStream.getTracks().forEach(t => t.stop());
+  const [w,h,fps] = $('#camQuality').value.split('x').map(Number);
+  const video = { width:{ideal:w}, height:{ideal:h}, frameRate:{ideal:fps} };
+  if(deviceId) video.deviceId = { exact: deviceId };
+  else video.facingMode = { ideal: 'environment' };
+  try{
+    camStream = await navigator.mediaDevices.getUserMedia({ video, audio:false });
+  }catch(e){
+    if(deviceId){ lsSet('camDevice',''); return startPreview(null); }
+    throw e;
+  }
+  const track = camStream.getVideoTracks()[0];
+  try{ track.contentHint = 'motion'; }catch(e){}
+  track.onended = () => { camEnded = true; };
+  camEnded = false;
+  $('#camPreview').srcObject = camStream;
+  await listCameras();
+  updateCamInfo();
+  // 通話中ならトラックを差し替える
+  if(camCall && camCall.peerConnection){
+    const sender = camCall.peerConnection.getSenders().find(s => s.track ? s.track.kind==='video' : true);
+    if(sender){ try{ await sender.replaceTrack(track); camTuned=false; tuneBitrate(); }catch(e){ console.warn(e); } }
+  }
+}
+
+async function listCameras(){
+  const sel = $('#camDevice');
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind==='videoinput');
+  const cur = camStream && camStream.getVideoTracks()[0].getSettings().deviceId;
+  sel.innerHTML = '';
+  devs.forEach((d,i) => {
+    const o = document.createElement('option');
+    o.value = d.deviceId;
+    o.textContent = jpCamName(d.label) || ('カメラ ' + (i+1));
+    if(d.deviceId === cur) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+function jpCamName(l){
+  if(!l) return '';
+  return l.replace('Back Ultra Wide Camera','背面・超広角').replace('Back Dual Wide Camera','背面・デュアル広角')
+          .replace('Back Triple Camera','背面・トリプル').replace('Back Dual Camera','背面・デュアル')
+          .replace('Back Telephoto Camera','背面・望遠').replace('Back Camera','背面・広角').replace('Front Camera','前面');
+}
+function updateCamInfo(){
+  if(!camStream) return;
+  const s = camStream.getVideoTracks()[0].getSettings();
+  $('#camInfo').textContent = `撮影：${s.width||'?'}×${s.height||'?'}・${s.frameRate?Math.round(s.frameRate):'?'}fps`;
+}
+
+$('#camDevice').onchange = e => { lsSet('camDevice', e.target.value); startPreview(e.target.value).catch(err => toast('切替失敗：'+err.message)); };
+$('#camQuality').onchange = e => { lsSet('camQuality', e.target.value); startPreview($('#camDevice').value||null).catch(err => toast('切替失敗：'+err.message)); };
+$('#camLabel').onchange = e => { lsSet('camLabel', e.target.value); if(camCall) toast('方向の変更は再接続で反映されます'); };
+$('#codeInput').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g,'').slice(0,4); });
+$('#connectBtn').onclick = connectToMonitor;
+
+let camEnded = false;
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState==='visible' && !$('#camera').hidden && camEnded){
+    startPreview($('#camDevice').value||null).catch(()=>{});
+  }
+});
+
+async function connectToMonitor(){
+  const code = $('#codeInput').value.trim();
+  if(!/^\d{4}$/.test(code)){ toast('iPadに表示されている4桁のコードを入力してください'); return; }
+  lsSet('lastCode', code);
+  $('#codeInput').blur();
+  if(!camStream){ try{ await startPreview(null); }catch(e){ toast('カメラを起動できません'); return; } }
+  $('#camStatus').textContent = '接続中…';
+  if(camCall){ try{ camCall.close(); }catch(e){} camCall=null; }
+  if(camPeer){ try{ camPeer.destroy(); }catch(e){} camPeer=null; }
+  camTuned = false;
+  const peer = new Peer();
+  camPeer = peer;
+  peer.on('open', () => {
+    const call = peer.call(ID_PREFIX + code, camStream, { metadata:{ label: $('#camLabel').value } });
+    camCall = call;
+    call.on('close', () => { if(camCall===call){ $('#camStatus').textContent='⚠️ 切断されました。「接続」で再接続できます'; } });
+    call.on('error', err => { $('#camStatus').textContent='❌ エラー：'+(err.type||err.message); });
+  });
+  peer.on('error', err => {
+    if(err.type==='peer-unavailable') $('#camStatus').textContent='❌ コード '+code+' のiPadが見つかりません。iPadでモニター画面が開いているか確認してください';
+    else if(err.type==='network' || err.type==='server-error' || err.type==='socket-error') $('#camStatus').textContent='❌ 接続サーバーに届きません。インターネット接続を確認してください';
+    else $('#camStatus').textContent='❌ エラー：'+(err.type||err.message);
+  });
+}
+
+setInterval(() => {
+  if(!camCall || !camCall.peerConnection) return;
+  const st = camCall.peerConnection.connectionState || camCall.peerConnection.iceConnectionState;
+  const m = {
+    'connected':'✅ 接続中 — iPadに映っています',
+    'completed':'✅ 接続中 — iPadに映っています',
+    'checking':'接続中…','connecting':'接続中…','new':'接続中…',
+    'disconnected':'⚠️ 通信が不安定です…',
+    'failed':'❌ つながりませんでした。iPhoneとiPadが同じWi-Fi（またはテザリング）につながっているか確認してください',
+    'closed':'⚠️ 切断されました'
+  };
+  if(m[st]) $('#camStatus').textContent = m[st];
+  if((st==='connected'||st==='completed') && !camTuned) tuneBitrate();
+  updateCamInfo();
+}, 1000);
+
+async function tuneBitrate(){
+  if(!camCall || !camCall.peerConnection) return;
+  camTuned = true;
+  for(const s of camCall.peerConnection.getSenders()){
+    if(!s.track || s.track.kind!=='video') continue;
+    try{
+      const p = s.getParameters();
+      if(!p.encodings || !p.encodings.length) p.encodings=[{}];
+      p.encodings[0].maxBitrate = 6000000;
+      p.encodings[0].maxFramerate = 60;
+      p.degradationPreference = 'maintain-framerate';
+      await s.setParameters(p);
+    }catch(e){ console.warn('setParameters', e); }
+  }
+}
+
+/* =====================================================
+   モニター側（iPad）
+   ===================================================== */
+const state = { mode:'live', delay:Number(lsGet('delay',8)), flip:lsGet('flip','0')==='1', tool:null,
+                review:false, reviewT:0, reviewMin:0, reviewMax:0, playing:false, speed:0.25 };
+let monPeer = null;
+const views = new Map();
+const history = [];
+
+function startMonitor(){
+  show('monitor');
+  keepAwake();
+  const tryId = (code) => {
+    const peer = new Peer(ID_PREFIX + code);
+    monPeer = peer;
+    peer.on('open', () => {
+      lsSet('monCode', code);
+      $('#monCode').textContent = code;
+      $('#codeChip').textContent = 'コード ' + code;
+      $('#monStatus').textContent = 'iPhoneからの接続を待っています…';
+    });
+    peer.on('error', err => {
+      if(err.type==='unavailable-id'){ try{ peer.destroy(); }catch(e){} tryId(randCode()); }
+      else if(err.type==='network' || err.type==='server-error' || err.type==='socket-error'){
+        $('#monStatus').textContent='❌ 接続サーバーに届きません。インターネット接続を確認してください';
+      } else console.warn(err);
+    });
+    peer.on('disconnected', () => { try{ peer.reconnect(); }catch(e){} });
+    peer.on('call', call => {
+      if(views.size >= 2){ call.close(); toast('同時に映せるのは2台までです'); return; }
+      call.answer();
+      call.on('stream', stream => {
+        if(views.has(call.connectionId)) return;
+        addView(call, stream);
+      });
+      call.on('close', () => removeView(call.connectionId));
+      call.on('error', () => removeView(call.connectionId));
+    });
+  };
+  tryId(lsGet('monCode','') || randCode());
+  applyUI();
+  requestAnimationFrame(loop);
+}
+function randCode(){ return String(Math.floor(1000 + Math.random()*9000)); }
+
+function addView(call, stream){
+  const label = (call.metadata && call.metadata.label) || 'カメラ';
+  const v = new View(call.connectionId, stream, label);
+  views.set(call.connectionId, v);
+  // 後方を左に
+  const stage = $('#stage');
+  const list = [...views.values()].sort((a,b) => (a.label==='後方'?0:1) - (b.label==='後方'?0:1));
+  list.forEach(x => stage.appendChild(x.el));
+  $('#waiting').style.display = 'none';
+  toast(label + 'カメラが接続されました');
+}
+function removeView(id){
+  const v = views.get(id);
+  if(!v) return;
+  v.destroy();
+  views.delete(id);
+  if(views.size===0) $('#waiting').style.display='';
+  toast(v.label + 'カメラが切断されました');
+}
+
+function lastLE(arr, t){
+  let lo=0, hi=arr.length-1, ans=-1;
+  while(lo<=hi){ const m=(lo+hi)>>1; if(arr[m].t<=t){ ans=m; lo=m+1; } else hi=m-1; }
+  return ans;
+}
+
+class View{
+  constructor(id, stream, label){
+    this.id=id; this.label=label; this.stream=stream;
+    this.el = document.createElement('div'); this.el.className='view';
+    this.video = document.createElement('video');
+    this.video.playsInline=true; this.video.muted=true; this.video.autoplay=true;
+    this.video.setAttribute('playsinline',''); this.video.srcObject=stream;
+    this.canvas = document.createElement('canvas');
+    this.ctx = this.canvas.getContext('2d');
+    this.badge = document.createElement('div'); this.badge.className='badge';
+    this.el.append(this.video, this.canvas, this.badge);
+    this.video.play().catch(()=>{});
+    this.frames=[]; this.frozen=null;
+    this.cap = document.createElement('canvas'); this.capCtx = this.cap.getContext('2d');
+    this.lastCap=0; this.inflight=0;
+    this.bmp=null; this.bmpFrame=null; this.decoding=false;
+    this.rect=null; this.shapes=[]; this.draft=null;
+    this.alive=true;
+    this.startCapture();
+    this.bindPointer();
+  }
+  startCapture(){
+    const v=this.video;
+    if('requestVideoFrameCallback' in v){
+      const cb = () => { if(!this.alive) return; this.capture(performance.now()); v.requestVideoFrameCallback(cb); };
+      v.requestVideoFrameCallback(cb);
+    } else {
+      this.useRafCapture = true;
+    }
+  }
+  capture(now){
+    const v=this.video;
+    if(v.readyState<2 || !v.videoWidth) return;
+    if(now - this.lastCap < 1000/CAP_MAX_FPS - 3) return;
+    if(this.inflight > 4) return;   // 端末が追いつかない時は間引く
+    this.lastCap = now;
+    const w = Math.min(CAP_W, v.videoWidth), h = Math.round(w * v.videoHeight / v.videoWidth);
+    if(this.cap.width!==w || this.cap.height!==h){ this.cap.width=w; this.cap.height=h; }
+    this.capCtx.drawImage(v, 0, 0, w, h);
+    this.inflight++;
+    const t = now;
+    this.cap.toBlob(b => {
+      this.inflight--;
+      if(!b || !this.alive) return;
+      this.frames.push({t, blob:b});
+      const cut = performance.now() - BUF_MS;
+      while(this.frames.length && this.frames[0].t < cut) this.frames.shift();
+    }, 'image/jpeg', 0.78);
+  }
+  want(f){
+    if(!f || f===this.bmpFrame || this.decoding) return;
+    this.decoding = true;
+    createImageBitmap(f.blob).then(b => {
+      if(this.bmp && this.bmp.close) this.bmp.close();
+      this.bmp = b; this.bmpFrame = f;
+    }).catch(()=>{}).finally(() => { this.decoding=false; });
+  }
+  render(now){
+    if(this.useRafCapture) this.capture(now);
+    const c=this.canvas, ctx=this.ctx;
+    const dpr = Math.min(window.devicePixelRatio||1, 2);
+    const W=Math.max(1,Math.round(c.clientWidth*dpr)), H=Math.max(1,Math.round(c.clientHeight*dpr));
+    if(c.width!==W || c.height!==H){ c.width=W; c.height=H; }
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+    let src=null, sw=0, sh=0, msg='';
+    if(state.review || state.mode==='delay'){
+      const list = state.review ? (this.frozen||[]) : this.frames;
+      const target = state.review ? state.reviewT : now - state.delay*1000;
+      const i = lastLE(list, target);
+      if(i>=0){
+        this.want(list[i]);
+        if(this.bmp){ src=this.bmp; sw=src.width; sh=src.height; }
+      } else if(state.review){
+        msg='この時点の映像はありません';
+      } else {
+        const have = list.length ? (now - list[0].t)/1000 : 0;
+        msg = `${state.delay}秒遅れ表示の準備中… あと${Math.max(1, Math.ceil(state.delay - have))}秒`;
+      }
+    } else {
+      const v=this.video;
+      if(v.readyState>=2 && v.videoWidth){ src=v; sw=v.videoWidth; sh=v.videoHeight; }
+      else msg='映像を待っています…';
+    }
+    if(src){
+      const s=Math.min(W/sw, H/sh), dw=sw*s, dh=sh*s, dx=(W-dw)/2, dy=(H-dh)/2;
+      this.rect={x:dx,y:dy,w:dw,h:dh};
+      if(state.flip){ ctx.save(); ctx.translate(W,0); ctx.scale(-1,1); ctx.drawImage(src, W-dx-dw, dy, dw, dh); ctx.restore(); }
+      else ctx.drawImage(src, dx, dy, dw, dh);
+    }
+    if(this.rect) this.drawShapes(ctx, dpr);
+    if(msg){
+      ctx.fillStyle='rgba(0,0,0,.6)'; ctx.fillRect(0, H/2-34*dpr, W, 68*dpr);
+      ctx.fillStyle='#eef3f0'; ctx.font=`${20*dpr}px -apple-system, "Hiragino Sans", sans-serif`;
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(msg, W/2, H/2);
+    }
+    const mode = state.review ? '⏸ 振り返り' : (state.mode==='delay' ? `⏱ ${state.delay}秒遅れ` : '● ライブ');
+    const txt = `${this.label}　${mode}`;
+    if(this.badge.textContent!==txt) this.badge.textContent = txt;
+  }
+  fromImg(p){ const r=this.rect, u = state.flip ? 1-p.u : p.u; return { x:r.x+u*r.w, y:r.y+p.v*r.h }; }
+  toImg(e){
+    const r=this.rect; if(!r) return null;
+    const b=this.canvas.getBoundingClientRect(), k=this.canvas.width/b.width;
+    const x=(e.clientX-b.left)*k, y=(e.clientY-b.top)*k;
+    let u=(x-r.x)/r.w; const v=(y-r.y)/r.h;
+    if(state.flip) u=1-u;
+    return {u, v};
+  }
+  drawShapes(ctx, dpr){
+    const all = this.draft ? this.shapes.concat([this.draft]) : this.shapes;
+    ctx.save();
+    ctx.lineWidth = 3*dpr; ctx.lineCap='round';
+    ctx.shadowColor='rgba(0,0,0,.7)'; ctx.shadowBlur=4*dpr;
+    for(const s of all){
+      const a=this.fromImg(s.a), b=this.fromImg(s.b);
+      ctx.strokeStyle = s===this.draft ? '#fff3a6' : '#ffe14d';
+      ctx.beginPath();
+      if(s.type==='line'){
+        // 線は画面の端まで延長（プレーン確認用）
+        const dx=b.x-a.x, dy=b.y-a.y, len=Math.hypot(dx,dy)||1, L=4000*dpr;
+        if(s.extend){ ctx.moveTo(a.x-dx/len*L, a.y-dy/len*L); ctx.lineTo(a.x+dx/len*L, a.y+dy/len*L); }
+        else { ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); }
+      } else {
+        ctx.arc(a.x, a.y, Math.hypot(b.x-a.x, b.y-a.y), 0, Math.PI*2);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  bindPointer(){
+    const c=this.canvas;
+    c.addEventListener('pointerdown', e => {
+      if(!state.tool) return;
+      const p=this.toImg(e); if(!p) return;
+      this.draft = { type:state.tool, a:p, b:p, extend:false };
+      try{ c.setPointerCapture(e.pointerId); }catch(_){}
+      e.preventDefault();
+    });
+    c.addEventListener('pointermove', e => {
+      if(!this.draft) return;
+      const p=this.toImg(e); if(p) this.draft.b=p;
+    });
+    const end = () => {
+      if(!this.draft) return;
+      const a=this.fromImg(this.draft.a), b=this.fromImg(this.draft.b);
+      if(Math.hypot(b.x-a.x, b.y-a.y) > 12){
+        if(this.draft.type==='line') this.draft.extend = true;
+        this.shapes.push(this.draft); history.push(this);
+      }
+      this.draft=null;
+    };
+    c.addEventListener('pointerup', end);
+    c.addEventListener('pointercancel', () => { this.draft=null; });
+  }
+  destroy(){
+    this.alive=false;
+    if(this.bmp && this.bmp.close) this.bmp.close();
+    this.frames=[]; this.frozen=null;
+    this.el.remove();
+  }
+}
+
+/* ---------- 振り返り（一時停止・コマ送り） ---------- */
+function enterReview(){
+  const now = performance.now();
+  let min=Infinity, max=-Infinity;
+  views.forEach(v => {
+    v.frozen = v.frames.slice();
+    if(v.frozen.length){ min=Math.min(min, v.frozen[0].t); max=Math.max(max, v.frozen[v.frozen.length-1].t); }
+  });
+  if(!isFinite(min)){ toast('まだ映像がありません'); return; }
+  state.review=true; state.reviewMin=min; state.reviewMax=max; state.playing=false;
+  state.reviewT = state.mode==='delay' ? Math.min(max, Math.max(min, now - state.delay*1000)) : max;
+  applyUI(); updateScrub();
+}
+function exitReview(){
+  state.review=false; state.playing=false;
+  views.forEach(v => v.frozen=null);
+  applyUI();
+}
+function primaryFrames(){
+  for(const v of views.values()) if(v.frozen && v.frozen.length) return v.frozen;
+  return [];
+}
+function stepFrame(dir){
+  state.playing=false;
+  const f = primaryFrames(); if(!f.length) return;
+  let i = lastLE(f, state.reviewT);
+  i = Math.max(0, Math.min(f.length-1, i + dir));
+  state.reviewT = f[i].t;
+  applyUI(); updateScrub();
+}
+function updateScrub(){
+  const span = Math.max(1, state.reviewMax - state.reviewMin);
+  $('#scrub').value = Math.round((state.reviewT - state.reviewMin)/span*1000);
+  $('#reviewTime').textContent = '−' + ((state.reviewMax - state.reviewT)/1000).toFixed(2) + '秒';
+}
+$('#scrub').addEventListener('input', e => {
+  state.playing=false;
+  state.reviewT = state.reviewMin + (state.reviewMax-state.reviewMin) * (Number(e.target.value)/1000);
+  applyUI(); updateScrub();
+});
+$('#pauseBtn').onclick = () => state.review ? exitReview() : enterReview();
+$('#exitReview').onclick = exitReview;
+$('#stepBack').onclick = () => stepFrame(-1);
+$('#stepFwd').onclick = () => stepFrame(1);
+$('#playBtn').onclick = () => {
+  if(state.reviewT >= state.reviewMax - 1) state.reviewT = state.reviewMin;
+  state.playing = !state.playing; applyUI();
+};
+$('#speedBtn').onclick = () => {
+  state.speed = state.speed===0.25 ? 0.5 : state.speed===0.5 ? 1 : 0.25;
+  applyUI();
+};
+
+/* ---------- ツールバー ---------- */
+$('#modeLive').onclick = () => { if(state.review) exitReview(); state.mode='live'; applyUI(); };
+$('#modeDelay').onclick = () => { if(state.review) exitReview(); state.mode='delay'; applyUI(); };
+$('#delayMinus').onclick = () => { state.delay=Math.max(DELAY_MIN, state.delay-1); lsSet('delay',state.delay); applyUI(); };
+$('#delayPlus').onclick = () => { state.delay=Math.min(DELAY_MAX, state.delay+1); lsSet('delay',state.delay); applyUI(); };
+$('#flipBtn').onclick = () => { state.flip=!state.flip; lsSet('flip', state.flip?'1':'0'); applyUI(); };
+$('#toolLine').onclick = () => { state.tool = state.tool==='line' ? null : 'line'; applyUI(); if(state.tool) toast('映像の上をなぞって線を引けます（自動で延長されます）'); };
+$('#toolCircle').onclick = () => { state.tool = state.tool==='circle' ? null : 'circle'; applyUI(); if(state.tool) toast('中心から外へなぞると円を描けます（頭の位置の確認に）'); };
+$('#undoBtn').onclick = () => { const v=history.pop(); if(v) v.shapes.pop(); };
+$('#clearBtn').onclick = () => { views.forEach(v => v.shapes=[]); history.length=0; };
+$('#fsBtn').onclick = () => {
+  const d=document, el=d.documentElement;
+  if(d.fullscreenElement || d.webkitFullscreenElement){ (d.exitFullscreen||d.webkitExitFullscreen).call(d); return; }
+  const req = el.requestFullscreen || el.webkitRequestFullscreen;
+  const fail = () => toast('全画面は「共有 → ホーム画面に追加」から開くと使えます');
+  if(!req){ fail(); return; }
+  try{ const r = req.call(el); if(r && r.catch) r.catch(fail); }catch(e){ fail(); }
+};
+
+function applyUI(){
+  $('#modeLive').classList.toggle('on', state.mode==='live' && !state.review);
+  $('#modeDelay').classList.toggle('on', state.mode==='delay' && !state.review);
+  $('#delayVal').textContent = state.delay + '秒';
+  $('#flipBtn').classList.toggle('on', state.flip);
+  $('#toolLine').classList.toggle('on', state.tool==='line');
+  $('#toolCircle').classList.toggle('on', state.tool==='circle');
+  $('#pauseBtn').classList.toggle('on', state.review);
+  $('#pauseBtn').textContent = state.review ? '▶︎ 映像に戻る' : '⏸ 止めて見る';
+  $('#reviewBar').hidden = !state.review;
+  $('#playBtn').textContent = state.playing ? '⏸ 停止' : '▶︎ 再生';
+  $('#speedBtn').textContent = '×' + state.speed;
+}
+
+/* ---------- 描画ループ ---------- */
+let lastNow = performance.now();
+function loop(now){
+  const dt = Math.min(100, now - lastNow); lastNow = now;
+  if(state.review && state.playing){
+    state.reviewT += dt * state.speed;
+    if(state.reviewT >= state.reviewMax){ state.reviewT = state.reviewMax; state.playing=false; applyUI(); }
+    updateScrub();
+  }
+  views.forEach(v => v.render(now));
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
